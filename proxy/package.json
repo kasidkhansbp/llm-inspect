@@ -1,0 +1,13 @@
+{
+  "name": "llm-inspect-proxy",
+  "version": "0.1.0",
+  "description": "Core proxy for llm-inspect",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
