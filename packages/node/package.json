@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Zero-config LLM API inspector — intercepts calls, shows token breakdown and cost estimates in a local dashboard",
   "main": "index.js",
+  "bin": {
+    "llm-inspect": "./proxy/main.js"
+  },
   "files": ["index.js", "proxy/"],
   "scripts": {
     "prepack": "node -e \"const fs=require('fs'); try{fs.rmSync('./proxy',{recursive:true})}catch(e){}; fs.cpSync('../../proxy', './proxy', {recursive:true})\"",
