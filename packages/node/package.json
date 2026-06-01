@@ -15,6 +15,10 @@
     "prepack": "node -e \"const fs=require('fs'); try{fs.rmSync('./proxy',{recursive:true})}catch(e){}; fs.cpSync('../../proxy', './proxy', {recursive:true})\"",
     "start": "node proxy/main.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kasidkhansbp/llm-inspect"
+  },
   "keywords": [
     "llm",
     "openai",
