@@ -1,17 +1,30 @@
 {
   "name": "llm-inspect",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Zero-config LLM API inspector — intercepts calls, shows token breakdown and cost estimates in a local dashboard",
   "main": "index.js",
   "bin": {
-    "llm-inspect": "./proxy/main.js"
+    "llm-inspect": "bin.js"
   },
-  "files": ["index.js", "proxy/"],
+  "files": [
+    "index.js",
+    "bin.js",
+    "proxy/"
+  ],
   "scripts": {
     "prepack": "node -e \"const fs=require('fs'); try{fs.rmSync('./proxy',{recursive:true})}catch(e){}; fs.cpSync('../../proxy', './proxy', {recursive:true})\"",
     "start": "node proxy/main.js"
   },
-  "keywords": ["llm", "openai", "anthropic", "debugging", "tokens", "cost", "inspector", "proxy"],
+  "keywords": [
+    "llm",
+    "openai",
+    "anthropic",
+    "debugging",
+    "tokens",
+    "cost",
+    "inspector",
+    "proxy"
+  ],
   "author": "",
   "license": "MIT",
   "engines": {
