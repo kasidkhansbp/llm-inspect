@@ -227,12 +227,25 @@ function connect() {
     if (state.selected === req.id) renderDetail();
   });
 
-  es.onerror = () => setTimeout(connect, 2000);
+  es.onerror = () => { if (!serverStopped) setTimeout(connect, 2000); };
 }
 
 connect();
 
 // ── Kill button ──────────────────────────────────────────────────────────────
+
+let serverStopped = false;
+
+function showStopped() {
+  if (serverStopped) return;
+  serverStopped = true;
+  document.body.innerHTML = `
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--muted);">
+      <div style="width:10px;height:10px;border-radius:50%;background:var(--red);"></div>
+      <span style="font-size:14px;color:var(--text);">Server stopped</span>
+      <span style="font-size:12px;">Close this tab</span>
+    </div>`;
+}
 
 (function () {
   const btn = document.getElementById('kill-btn');
@@ -255,6 +268,6 @@ connect();
     clearTimeout(resetTimer);
     btn.textContent = 'Stopping…';
     btn.disabled = true;
-    fetch('/shutdown', { method: 'POST' }).catch(() => {});
+    fetch('/shutdown', { method: 'POST' }).then(showStopped).catch(showStopped);
   });
 })();
