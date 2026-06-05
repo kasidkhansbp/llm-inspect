@@ -50,7 +50,7 @@ jobs:
           TAG=${GITHUB_REF#refs/tags/v}
           sed -i "s/^version = .*/version = \"$TAG\"/" pyproject.toml
       - run: pip install hatchling build
-      - run: python -m build
+      - run: python -m build --wheel
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
