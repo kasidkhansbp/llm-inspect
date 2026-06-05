@@ -231,3 +231,30 @@ function connect() {
 }
 
 connect();
+
+// ── Kill button ──────────────────────────────────────────────────────────────
+
+(function () {
+  const btn = document.getElementById('kill-btn');
+  let confirmed = false;
+  let resetTimer = null;
+
+  btn.addEventListener('click', () => {
+    if (!confirmed) {
+      confirmed = true;
+      btn.textContent = 'Sure?';
+      btn.classList.add('confirm');
+      resetTimer = setTimeout(() => {
+        confirmed = false;
+        btn.textContent = 'Stop';
+        btn.classList.remove('confirm');
+      }, 3000);
+      return;
+    }
+
+    clearTimeout(resetTimer);
+    btn.textContent = 'Stopping…';
+    btn.disabled = true;
+    fetch('/shutdown', { method: 'POST' }).catch(() => {});
+  });
+})();

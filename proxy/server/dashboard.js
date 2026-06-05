@@ -34,6 +34,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && req.url === '/shutdown') {
+    res.writeHead(200);
+    res.end();
+    process.exit(0);
+  }
+
   if (req.url === '/app.js') {
     serveFile(res, path.join(DASHBOARD_DIR, 'app.js'), 'application/javascript');
     return;
