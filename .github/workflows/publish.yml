@@ -49,8 +49,6 @@ jobs:
         run: |
           TAG=${GITHUB_REF#refs/tags/v}
           sed -i "s/^version = .*/version = \"$TAG\"/" pyproject.toml
-      - name: Bundle proxy into package
-        run: cp -r ../../proxy llm_inspect/proxy
       - run: pip install hatchling build
       - run: python -m build
       - name: Publish to PyPI

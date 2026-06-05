@@ -20,8 +20,8 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/kasidkhan/llm-inspect"
 
-[tool.hatch.build.targets.wheel]
-artifacts = ["llm_inspect/proxy/**"]
+[tool.hatch.build.targets.wheel.force-include]
+"../../proxy" = "llm_inspect/proxy"
 
 [tool.hatch.build.targets.sdist]
 include = ["llm_inspect/", "README.md"]
