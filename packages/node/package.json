@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "prepack": "node -e \"const fs=require('fs'); try{fs.rmSync('./proxy',{recursive:true})}catch(e){}; fs.cpSync('../../proxy', './proxy', {recursive:true})\"",
-    "start": "node proxy/main.js"
+    "start": "node ../../proxy/main.js"
   },
   "repository": {
     "type": "git",

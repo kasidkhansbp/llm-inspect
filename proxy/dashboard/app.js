@@ -1,3 +1,5 @@
+// Keep in sync with MAX_REQUESTS in proxy/lib/store.js
+const MAX_REQUESTS = 200;
 const state = { requests: [], selected: null };
 
 // ── Formatters ──────────────────────────────────────────────────────────────
@@ -96,6 +98,7 @@ function upsert(req) {
   const idx = state.requests.findIndex(r => r.id === req.id);
   if (idx >= 0) state.requests[idx] = req;
   else state.requests.unshift(req);
+  if (state.requests.length > MAX_REQUESTS) state.requests.length = MAX_REQUESTS;
 }
 
 // ── Stats ────────────────────────────────────────────────────────────────────
@@ -203,8 +206,12 @@ function renderMessageCard(msg, totalTok) {
 
 // ── SSE connection ───────────────────────────────────────────────────────────
 
+let es = null;
+let reconnectTimer = null;
+
 function connect() {
-  const es = new EventSource('/events');
+  if (es) es.close();
+  es = new EventSource('/events');
 
   es.addEventListener('init', e => {
     state.requests = JSON.parse(e.data);
@@ -221,13 +228,21 @@ function connect() {
 
   es.addEventListener('update', e => {
     const req = JSON.parse(e.data);
+    // Ignore updates for requests already evicted from the capped list
+    if (!state.requests.some(r => r.id === req.id)) return;
     upsert(req);
     renderList();
     updateStats();
     if (state.selected === req.id) renderDetail();
   });
 
-  es.onerror = () => { if (!serverStopped) setTimeout(connect, 2000); };
+  es.onerror = () => {
+    // EventSource retries on its own; close it so only our timer reconnects,
+    // otherwise each error spawns an extra connection that is never released.
+    es.close();
+    if (serverStopped || reconnectTimer) return;
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 2000);
+  };
 }
 
 connect();
