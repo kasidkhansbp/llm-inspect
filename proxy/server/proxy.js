@@ -153,8 +153,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 function start() {
-  server.listen(PROXY_PORT, () => {
-    console.log(`llm-inspect proxy listening on :${PROXY_PORT}`);
+  // Loopback only: this proxy carries prompts/responses and must not be LAN-reachable
+  server.listen(PROXY_PORT, '127.0.0.1', () => {
+    console.log(`llm-inspect proxy listening on 127.0.0.1:${PROXY_PORT}`);
   });
 }
 

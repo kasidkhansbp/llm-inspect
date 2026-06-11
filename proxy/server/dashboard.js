@@ -23,7 +23,6 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
     });
     res.write(`event: init\ndata: ${JSON.stringify(requests)}\n\n`);
     sseClients.push(res);
@@ -49,7 +48,8 @@ const server = http.createServer((req, res) => {
 });
 
 function start() {
-  server.listen(DASHBOARD_PORT, () => {
+  // Loopback only: the dashboard exposes full request/response bodies
+  server.listen(DASHBOARD_PORT, '127.0.0.1', () => {
     console.log(`llm-inspect dashboard at http://localhost:${DASHBOARD_PORT}`);
   });
 }
