@@ -9,7 +9,14 @@ const DASHBOARD_DIR = path.join(__dirname, '../dashboard');
 function serveFile(res, filePath, contentType) {
   try {
     const content = fs.readFileSync(filePath);
-    res.writeHead(200, { 'Content-Type': contentType });
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'X-Content-Type-Options': 'nosniff',
+      // Backstop against markup injection from intercepted payloads:
+      // no inline/external scripts beyond our own origin
+      'Content-Security-Policy':
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+    });
     res.end(content);
   } catch {
     res.writeHead(404);

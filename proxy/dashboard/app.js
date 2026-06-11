@@ -22,7 +22,13 @@ function fmtDuration(ms) {
 }
 
 function escHtml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// For interpolation into class="..." — request-derived values must not be
+// able to close the attribute and inject handlers
+function cssSafe(s) {
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, '');
 }
 
 function highlightJSON(json) {
@@ -124,9 +130,9 @@ function renderList() {
     div.dataset.id = r.id;
     div.innerHTML = `
       <div class="req-top">
-        <span class="provider-badge badge-${r.provider}">${r.provider}</span>
-        <span class="req-model">${r.model}</span>
-        <span class="req-status status-${r.status}"></span>
+        <span class="provider-badge badge-${cssSafe(r.provider)}">${escHtml(r.provider)}</span>
+        <span class="req-model">${escHtml(r.model)}</span>
+        <span class="req-status status-${cssSafe(r.status)}"></span>
       </div>
       <div class="req-bottom">
         <span class="req-time">${fmtTime(r.timestamp)}</span>
@@ -157,10 +163,10 @@ function renderDetail() {
 
   document.getElementById('detail-title').textContent = r.model;
   document.getElementById('detail-meta').innerHTML = `
-    <span>${r.provider}</span>
+    <span>${escHtml(r.provider)}</span>
     <span>${fmtTime(r.timestamp)}</span>
     ${r.durationMs != null ? `<span>${fmtDuration(r.durationMs)}</span>` : ''}
-    <span class="req-status status-${r.status}" style="display:inline-block"></span>
+    <span class="req-status status-${cssSafe(r.status)}" style="display:inline-block"></span>
   `;
 
   const totalTok = r.messages.reduce((s, m) => s + m.tokens, 0) || 1;
@@ -193,11 +199,11 @@ function renderMessageCard(msg, totalTok) {
   el.className = 'msg-card';
   el.innerHTML = `
     <div class="msg-header">
-      <span class="role-tag role-${msg.role}">${msg.role}</span>
+      <span class="role-tag role-${cssSafe(msg.role)}">${escHtml(msg.role)}</span>
       <span class="msg-tokens">${fmt(msg.tokens)} tokens (${pct}%)</span>
     </div>
     <div style="padding:4px 12px">
-      <div class="token-bar-wrap"><div class="token-bar bar-${msg.role}" style="width:${pct}%"></div></div>
+      <div class="token-bar-wrap"><div class="token-bar bar-${cssSafe(msg.role)}" style="width:${pct}%"></div></div>
     </div>
     ${msg.preview ? `<div class="msg-preview">${escHtml(msg.preview)}${msg.preview.length >= 200 ? '…' : ''}</div>` : ''}
   `;
