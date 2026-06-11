@@ -48,6 +48,12 @@ const server = http.createServer((req, res) => {
 });
 
 function start() {
+  // A bind failure must exit (not linger half-started) so the SDK
+  // wrappers detect the dead proxy and fail open.
+  server.on('error', (err) => {
+    console.error(`[llm-inspect] failed to bind :${DASHBOARD_PORT}: ${err.message}`);
+    process.exit(1);
+  });
   // Loopback only: the dashboard exposes full request/response bodies
   server.listen(DASHBOARD_PORT, '127.0.0.1', () => {
     console.log(`llm-inspect dashboard at http://localhost:${DASHBOARD_PORT}`);

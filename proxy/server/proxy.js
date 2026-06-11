@@ -55,7 +55,7 @@ function extractStreamingText(chunks, provider) {
   return parts.length ? parts.join('') : null;
 }
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   if (req.url === '/health') {
     res.writeHead(200); res.end('ok'); return;
   }
@@ -150,9 +150,25 @@ const server = http.createServer(async (req, res) => {
 
   upstream.write(bodyBuf);
   upstream.end();
+}
+
+const server = http.createServer((req, res) => {
+  res.on('error', () => {});
+  handleRequest(req, res).catch(() => {
+    // A client abort mid-body rejects collectBody(); unhandled, that
+    // rejection would crash the proxy and kill every in-flight call.
+    if (!res.headersSent) res.writeHead(500);
+    res.end();
+  });
 });
 
 function start() {
+  // A bind failure must exit (not linger half-started) so the SDK
+  // wrappers detect the dead proxy and fail open.
+  server.on('error', (err) => {
+    console.error(`[llm-inspect] failed to bind :${PROXY_PORT}: ${err.message}`);
+    process.exit(1);
+  });
   // Loopback only: this proxy carries prompts/responses and must not be LAN-reachable
   server.listen(PROXY_PORT, '127.0.0.1', () => {
     console.log(`llm-inspect proxy listening on 127.0.0.1:${PROXY_PORT}`);

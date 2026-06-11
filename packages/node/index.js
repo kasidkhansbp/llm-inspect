@@ -7,7 +7,9 @@ const PROXY_PATH = path.resolve(__dirname, 'proxy/main.js');
 
 function isProxyRunning() {
   return new Promise((resolve) => {
-    const req = http.request({ host: 'localhost', port: PROXY_PORT, path: '/health', method: 'GET' }, (res) => {
+    // 127.0.0.1, not localhost: the proxy binds IPv4 loopback only, and
+    // localhost resolves to ::1 first on some systems (e.g. Windows)
+    const req = http.request({ host: '127.0.0.1', port: PROXY_PORT, path: '/health', method: 'GET' }, (res) => {
       resolve(res.statusCode === 200);
     });
     req.on('error', () => resolve(false));
@@ -16,19 +18,40 @@ function isProxyRunning() {
   });
 }
 
+async function waitForProxy(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isProxyRunning()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return false;
+}
+
 async function init() {
-  const running = await isProxyRunning();
+  let running = await isProxyRunning();
   if (!running) {
     const child = spawn(process.execPath, [PROXY_PATH], {
       detached: true,
       stdio: 'ignore',
     });
+    child.on('error', () => {});
     child.unref();
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    running = await waitForProxy(5000);
   }
 
-  process.env.ANTHROPIC_BASE_URL = `http://localhost:${PROXY_PORT}`;
-  process.env.OPENAI_BASE_URL = `http://localhost:${PROXY_PORT}/openai`;
+  if (!running) {
+    // Fail open: never break the host app's LLM calls. Leave base URLs
+    // untouched so requests go directly to the provider.
+    console.error(
+      `[llm-inspect] proxy failed to start on :${PROXY_PORT} - ` +
+      'inspection disabled, LLM calls will go directly to the provider. ' +
+      `Is port ${PROXY_PORT} already in use?`
+    );
+    return;
+  }
+
+  process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${PROXY_PORT}`;
+  process.env.OPENAI_BASE_URL = `http://127.0.0.1:${PROXY_PORT}/openai`;
 }
 
 module.exports = { init };
