@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -14,8 +15,9 @@ def _is_proxy_running() -> bool:
     # 127.0.0.1, not localhost: the proxy binds IPv4 loopback only, and
     # localhost resolves to ::1 first on some systems (e.g. Windows)
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{PROXY_PORT}/health", timeout=0.5):
-            return True
+        with urllib.request.urlopen(f"http://127.0.0.1:{PROXY_PORT}/health", timeout=0.5) as resp:
+            # Anything on this port that isn't our proxy must not receive traffic
+            return json.load(resp).get("service") == "llm-inspect"
     except Exception:
         return False
 

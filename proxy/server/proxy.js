@@ -3,6 +3,7 @@ const https = require('https');
 const { estimateCost } = require('../lib/pricing');
 const { extractMessages, parseStreamingTokens } = require('../lib/tokens');
 const { broadcast, addRequest, getNextId } = require('../lib/store');
+const { version } = require('../package.json');
 
 const PROXY_PORT = 8787;
 
@@ -57,7 +58,11 @@ function extractStreamingText(chunks, provider) {
 
 async function handleRequest(req, res) {
   if (req.url === '/health') {
-    res.writeHead(200); res.end('ok'); return;
+    // Self-identify: wrappers must not mistake a foreign server on this
+    // port for the proxy and route LLM traffic into it
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ service: 'llm-inspect', version }));
+    return;
   }
 
   const provider = detectProvider(req);

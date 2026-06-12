@@ -10,7 +10,15 @@ function isProxyRunning() {
     // 127.0.0.1, not localhost: the proxy binds IPv4 loopback only, and
     // localhost resolves to ::1 first on some systems (e.g. Windows)
     const req = http.request({ host: '127.0.0.1', port: PROXY_PORT, path: '/health', method: 'GET' }, (res) => {
-      resolve(res.statusCode === 200);
+      if (res.statusCode !== 200) { res.resume(); resolve(false); return; }
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        // Anything on this port that isn't our proxy must not receive traffic
+        try { resolve(JSON.parse(body).service === 'llm-inspect'); }
+        catch { resolve(false); }
+      });
+      res.on('error', () => resolve(false));
     });
     req.on('error', () => resolve(false));
     req.setTimeout(500, () => { req.destroy(); resolve(false); });

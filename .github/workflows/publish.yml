@@ -26,6 +26,7 @@ jobs:
         run: |
           TAG=${GITHUB_REF#refs/tags/v}
           npm version $TAG --no-git-tag-version
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$TAG\"/" ../../proxy/package.json
       - run: npm publish --provenance
 
   publish-pypi:
@@ -49,6 +50,7 @@ jobs:
         run: |
           TAG=${GITHUB_REF#refs/tags/v}
           sed -i "s/^version = .*/version = \"$TAG\"/" pyproject.toml
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$TAG\"/" ../../proxy/package.json
       - run: pip install hatchling build
       - run: python -m build --wheel
       - name: Publish to PyPI
