@@ -42,8 +42,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'POST' && req.url === '/shutdown') {
     res.writeHead(200);
-    res.end();
-    process.exit(0);
+    res.end('', () => process.exit(0));
   }
 
   if (req.url === '/app.js') {
