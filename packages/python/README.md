@@ -19,7 +19,7 @@ import anthropic
 client = anthropic.Anthropic()
 ```
 
-Dashboard opens automatically at **http://localhost:8788**
+Dashboard opens automatically at **http://127.0.0.1:8788**
 
 ## How it works
 
