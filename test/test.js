@@ -1,4 +1,4 @@
-process.env.ANTHROPIC_BASE_URL = 'http://localhost:8787';
+process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:8787';
 
 const Anthropic = require('@anthropic-ai/sdk');
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -14,7 +14,7 @@ async function main() {
   });
 
   console.log('Response:', response.content[0].text);
-  console.log('Check the dashboard at http://localhost:8788');
+  console.log('Check the dashboard at http://127.0.0.1:8788');
 }
 
 main().catch(console.error);

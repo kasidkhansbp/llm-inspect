@@ -62,7 +62,7 @@ function start() {
   });
   // Loopback only: the dashboard exposes full request/response bodies
   server.listen(DASHBOARD_PORT, '127.0.0.1', () => {
-    console.log(`llm-inspect dashboard at http://localhost:${DASHBOARD_PORT}`);
+    console.log(`llm-inspect dashboard at http://127.0.0.1:${DASHBOARD_PORT}`);
   });
 }
 
