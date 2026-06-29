@@ -52,4 +52,51 @@ function parseStreamingTokens(chunks, provider) {
   return { inputTokens, outputTokens };
 }
 
-module.exports = { extractMessages, parseStreamingTokens };
+function extractStreamingText(chunks, provider) {
+  const text = Buffer.concat(chunks).toString();
+  const parts = [];
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data: ')) continue;
+    try {
+      const data = JSON.parse(line.slice(6));
+      if (provider === 'anthropic' && data.type === 'content_block_delta' && data.delta?.type === 'text_delta') {
+        parts.push(data.delta.text);
+      } else if (provider === 'openai' && data.choices?.[0]?.delta?.content) {
+        parts.push(data.choices[0].delta.content);
+      }
+    } catch(err) {
+      console.error('parse failed for line:', JSON.stringify(line), err.message);
+    }
+  }
+  return parts.length ? parts.join('') : null;
+}
+
+// Mutates entry with tokens/text parsed from the upstream response.
+function applyResponse(entry, chunks, isStreaming) {
+  const { provider } = entry;
+  if (isStreaming) {
+    const { inputTokens, outputTokens } = parseStreamingTokens(chunks, provider);
+    if (inputTokens > 0) entry.inputTokens = inputTokens;
+    entry.outputTokens = outputTokens;
+    entry.responseText = extractStreamingText(chunks, provider);
+    return;
+  }
+
+  let json;
+  try { json = JSON.parse(Buffer.concat(chunks).toString()); } catch { return; }
+  if (!json.usage) return;
+
+  if (provider === 'anthropic') {
+    entry.inputTokens = json.usage.input_tokens || entry.inputTokens;
+    entry.outputTokens = json.usage.output_tokens || 0;
+    entry.responseText = (json.content || [])
+      .filter(b => b.type === 'text').map(b => b.text).join('\n') || null;
+  } else if (provider === 'openai') {
+    entry.inputTokens = json.usage.prompt_tokens || entry.inputTokens;
+    entry.outputTokens = json.usage.completion_tokens || 0;
+    entry.responseText = json.choices?.[0]?.message?.content || null;
+  }
+  entry.responseRaw = json;
+}
+
+module.exports = { extractMessages, parseStreamingTokens, extractStreamingText, applyResponse };

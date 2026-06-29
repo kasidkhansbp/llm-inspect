@@ -1,8 +1,8 @@
 const http = require('http');
 const https = require('https');
 const { estimateCost } = require('../lib/pricing');
-const { extractMessages, parseStreamingTokens } = require('../lib/tokens');
-const { broadcast, addRequest, getNextId } = require('../lib/store');
+const { extractMessages, applyResponse } = require('../lib/tokens');
+const { broadcast, addRequest, createEntry } = require('../lib/store');
 const { version } = require('../package.json');
 
 const PROXY_PORT = 8787;
@@ -39,118 +39,78 @@ function upstreamOptions(req, provider, bodyBuf) {
   return { host, port: 443, path, method: req.method, headers };
 }
 
-function extractStreamingText(chunks, provider) {
-  const text = Buffer.concat(chunks).toString();
-  const parts = [];
-  for (const line of text.split('\n')) {
-    if (!line.startsWith('data: ')) continue;
-    try {
-      const data = JSON.parse(line.slice(6));
-      if (provider === 'anthropic' && data.type === 'content_block_delta' && data.delta?.type === 'text_delta') {
-        parts.push(data.delta.text);
-      } else if (provider === 'openai' && data.choices?.[0]?.delta?.content) {
-        parts.push(data.choices[0].delta.content);
-      }
-    } catch {}
+function handleHealth(res) {
+  // Self-identify: wrappers must not mistake a foreign server on this
+  // port for the proxy and route LLM traffic into it
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ service: 'llm-inspect', version }));
+}
+
+function finalize(entry, startMs, status) {
+  entry.status = status;
+  entry.durationMs = Date.now() - startMs;
+  broadcast('update', entry);
+}
+
+// Parse the incoming body and record the request entry (store + broadcast).
+// Stays in Pass: delegates meaning-making to lib/ and never throws — a malformed
+// body still proceeds with an empty parsedBody so the request is proxied.
+function recordRequest(provider, bodyBuf) {
+  let parsedBody = {};
+  try {
+    parsedBody = JSON.parse(bodyBuf.toString());
+  } catch (err) {
+    // Side-Channel Invariant: a malformed body is still proxied; we only lose metrics.
+    console.warn(`[proxy] could not parse ${provider} request body as JSON: ${err.message}`);
   }
-  return parts.length ? parts.join('') : null;
+
+  const entry = createEntry(provider, parsedBody, extractMessages(parsedBody, provider));
+  addRequest(entry);
+  broadcast('request', entry);
+  return { entry, isStreaming: parsedBody.stream === true };
+}
+
+// Relay the upstream response to the client while tee-ing a copy for metrics.
+function handleUpstreamResponse(upstreamRes, res, entry, isStreaming, startMs) {
+  res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
+  const chunks = [];
+
+  upstreamRes.on('data', (chunk) => {
+    res.write(chunk);
+    chunks.push(chunk);
+  });
+
+  upstreamRes.on('end', () => {
+    res.end();
+    applyResponse(entry, chunks, isStreaming);
+    entry.cost = estimateCost(entry.model, entry.inputTokens, entry.outputTokens);
+    finalize(entry, startMs, upstreamRes.statusCode < 400 ? 'success' : 'error');
+  });
+
+  upstreamRes.on('error', () => {
+    res.end();
+    finalize(entry, startMs, 'error');
+  });
 }
 
 async function handleRequest(req, res) {
-  if (req.url === '/health') {
-    // Self-identify: wrappers must not mistake a foreign server on this
-    // port for the proxy and route LLM traffic into it
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ service: 'llm-inspect', version }));
-    return;
-  }
-
   const provider = detectProvider(req);
   const bodyBuf = await collectBody(req);
-  let parsedBody = {};
-  try { parsedBody = JSON.parse(bodyBuf.toString()); } catch {}
 
-  const id = getNextId();
-  const model = parsedBody.model || 'unknown';
-  const messages = extractMessages(parsedBody, provider);
-  const inputTokensEstimate = messages.reduce((s, m) => s + m.tokens, 0);
-  const isStreaming = parsedBody.stream === true;
+  // 1. Record the incoming request
+  const { entry, isStreaming } = recordRequest(provider, bodyBuf);
 
-  const entry = {
-    id,
-    timestamp: new Date().toISOString(),
-    provider,
-    model,
-    status: 'pending',
-    inputTokens: inputTokensEstimate,
-    outputTokens: 0,
-    cost: null,
-    messages,
-    requestBody: parsedBody,
-    responseText: null,
-    responseRaw: null,
-    durationMs: null,
-  };
-  addRequest(entry);
-  broadcast('request', entry);
-
+  // 2. Forward to upstream and relay the response back
   const startMs = Date.now();
-  const opts = upstreamOptions(req, provider, bodyBuf);
-
-  const upstream = https.request(opts, (upstreamRes) => {
-    res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
-    const responseChunks = [];
-
-    upstreamRes.on('data', (chunk) => {
-      res.write(chunk);
-      responseChunks.push(chunk);
-    });
-
-    upstreamRes.on('end', () => {
-      res.end();
-      entry.durationMs = Date.now() - startMs;
-
-      if (isStreaming) {
-        const { inputTokens, outputTokens } = parseStreamingTokens(responseChunks, provider);
-        if (inputTokens > 0) entry.inputTokens = inputTokens;
-        entry.outputTokens = outputTokens;
-        entry.responseText = extractStreamingText(responseChunks, provider);
-      } else {
-        try {
-          const json = JSON.parse(Buffer.concat(responseChunks).toString());
-          if (provider === 'anthropic' && json.usage) {
-            entry.inputTokens = json.usage.input_tokens || entry.inputTokens;
-            entry.outputTokens = json.usage.output_tokens || 0;
-            entry.responseText = (json.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n') || null;
-            entry.responseRaw = json;
-          } else if (provider === 'openai' && json.usage) {
-            entry.inputTokens = json.usage.prompt_tokens || entry.inputTokens;
-            entry.outputTokens = json.usage.completion_tokens || 0;
-            entry.responseText = json.choices?.[0]?.message?.content || null;
-            entry.responseRaw = json;
-          }
-        } catch {}
-      }
-
-      entry.status = upstreamRes.statusCode < 400 ? 'success' : 'error';
-      entry.cost = estimateCost(model, entry.inputTokens, entry.outputTokens);
-      broadcast('update', entry);
-    });
-
-    upstreamRes.on('error', () => {
-      res.end();
-      entry.status = 'error';
-      entry.durationMs = Date.now() - startMs;
-      broadcast('update', entry);
-    });
+  const upstream = https.request(upstreamOptions(req, provider, bodyBuf), (upstreamRes) => {
+    handleUpstreamResponse(upstreamRes, res, entry, isStreaming, startMs);
   });
 
+  // 3. Handle upstream connection failures (couldn't reach the API at all)
   upstream.on('error', (err) => {
     res.writeHead(502);
     res.end(JSON.stringify({ error: 'Upstream request failed', detail: err.message }));
-    entry.status = 'error';
-    entry.durationMs = Date.now() - startMs;
-    broadcast('update', entry);
+    finalize(entry, startMs, 'error');
   });
 
   upstream.write(bodyBuf);
@@ -159,6 +119,7 @@ async function handleRequest(req, res) {
 
 const server = http.createServer((req, res) => {
   res.on('error', () => {});
+  if (req.url === '/health') return handleHealth(res);
   handleRequest(req, res).catch(() => {
     // A client abort mid-body rejects collectBody(); unhandled, that
     // rejection would crash the proxy and kill every in-flight call.
