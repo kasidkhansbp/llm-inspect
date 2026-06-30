@@ -38,6 +38,16 @@ Stages depend rightward only: `server/` → `lib/`. **`lib/` must never import f
 or know that HTTP exists.** (This is why `createEntry`/`applyResponse` live in `lib/`, not in
 `proxy.js`.)
 
+**One deliberate exception — the provider registry (`constants.js`).** Adding a client must
+be a *single* edit, so all per-provider config lives in one `PROVIDERS` map in `constants.js`,
+where each entry carries both its routing (`match`/`host`/`rewritePath`, a Pass concern) and
+its parsing (`extractMessages`/`parseStreamingTokens`/`streamDelta`/`applyResponse`, a Parse
+concern). `lib/tokens.js` imports this map, so Parse technically *sees* the upstream hostnames.
+This is an accepted trade: single-source extensibility beats strict layering here. The rule is
+still honored in spirit — `lib/` only *reads its parse fields and acts on them*; it never
+touches `host`/`match` or performs HTTP. Keep it that way: don't make `lib/` consume a route
+field, and don't scatter provider config back out into the consuming files.
+
 ## Law 3 — Single Responsibility (orchestrators vs. helpers)
 
 Stages tell you *where* code lives; SRP tells you *how big* a function may get. Write
@@ -76,11 +86,20 @@ Execution rules:
    observers → Publish. If a function does two, split it (Law 3).
 
 ## Where things live (current map)
+- Configuring an LLM client (routing **and** parsing) → `constants.js` (`PROVIDERS`). This is
+  the single extension point: to support a new client, add one entry (copy the commented
+  `deepseek` template) — no other file changes. `server/proxy.js` reads its route fields
+  (`detectProvider`/`upstreamOptions`); `lib/tokens.js` reads its parse fields (`providerFor`).
+  An unmatched route is rejected (404), and an unparseable provider degrades to no metrics —
+  never a guessed default. See the Dependency Rule exception above.
 - Constructing the request-log entry model → `lib/store.js` (`createEntry`). The store owns
   the entry shape and its id counter; keep the factory next to `addRequest` so the entry
   lifecycle (create → store → cap) stays in one module.
 - Parsing responses / counting tokens (streaming + non-streaming) → `lib/tokens.js`
-  (`extractMessages`, `parseStreamingTokens`, `extractStreamingText`, `applyResponse`).
+  (`extractMessages`, `parseStreamingTokens`, `extractStreamingText`, `applyResponse`). These
+  are thin orchestrators: they dispatch to the per-provider strategy via `providerFor`, falling
+  back to a no-op `UNSUPPORTED` handler. The provider-specific logic itself lives in
+  `constants.js` (`PROVIDERS`), not here.
 - Pure orchestration glue (e.g. `finalize`) may stay in `server/proxy.js` — it's part of the
   HTTP flow. Watch this seam: if `finalize` grows, the state-mutation half belongs in `store.js`.
 
@@ -92,6 +111,31 @@ Execution rules:
 - The entry is a plain mutable object with placeholder fields (`status: 'pending'`, nulls)
   filled in later by `applyResponse` / `finalize`. There is no enforced schema; if validation
   is ever needed, add it in `store.js`, which owns the model.
+
+## Running a manual smoke test
+End-to-end check that the proxy relays a real call and captures it on the dashboard. Two
+terminals, run in order:
+
+1. **Start the proxy + dashboard** (leave running):
+   ```powershell
+   cd C:\Users\kasid\workspace\llm-inspect\proxy
+   node main.js
+   ```
+   Proxy → http://127.0.0.1:8787 · Dashboard → http://127.0.0.1:8788
+
+2. **Send a request through the proxy** (new terminal):
+   ```powershell
+   cd C:\Users\kasid\workspace\llm-inspect\test
+   $env:ANTHROPIC_API_KEY = "sk-ant-..."   # required — see note
+   node .\test.js
+   ```
+
+Then watch the request/response appear on the dashboard.
+
+**Important:** `ANTHROPIC_API_KEY` must be set in the *same terminal* as step 2. Without it the
+Anthropic SDK aborts before sending, so the request never reaches the proxy and the dashboard
+stays empty — it looks broken but isn't. `$env:` only lasts for that terminal session, so set
+it again in any fresh terminal. It makes a real, billable API call.
 
 ## Other conventions
 - Don't export a helper that's only an internal detail of one factory (e.g. the id counter

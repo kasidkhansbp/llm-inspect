@@ -3,6 +3,7 @@ const https = require('https');
 const { estimateCost } = require('../lib/pricing');
 const { extractMessages, applyResponse } = require('../lib/tokens');
 const { broadcast, addRequest, createEntry } = require('../lib/store');
+const { PROVIDERS } = require('../constants');
 const { version } = require('../package.json');
 
 const PROXY_PORT = 8787;
@@ -18,25 +19,27 @@ function collectBody(req) {
 
 function detectProvider(req) {
   const url = req.url || '';
-  if (url.startsWith('/openai') || url.startsWith('/v1/chat')) return 'openai';
-  return 'anthropic';
+  const name = Object.keys(PROVIDERS).find(p => PROVIDERS[p].match(url));
+  return name || null;
 }
 
 function upstreamOptions(req, provider, bodyBuf) {
-  let path = req.url;
-  let host;
-
-  if (provider === 'anthropic') {
-    host = 'api.anthropic.com';
-  } else {
-    host = 'api.openai.com';
-    path = path.replace(/^\/openai/, '') || '/';
-  }
+  const { host, rewritePath } = PROVIDERS[provider];
+  const path = rewritePath(req.url);
 
   const headers = { ...req.headers, host, 'content-length': bodyBuf.length };
   delete headers['accept-encoding'];
 
   return { host, port: 443, path, method: req.method, headers };
+}
+
+function rejectUnsupported(req, res) {
+  const supported = Object.keys(PROVIDERS).join(', ');
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    error: 'Unsupported LLM client',
+    detail: `No provider matches "${req.url}". This proxy supports: ${supported}. Add a provider in server/proxy.js and lib/tokens.js to extend it.`,
+  }));
 }
 
 function handleHealth(res) {
@@ -95,6 +98,8 @@ function handleUpstreamResponse(upstreamRes, res, entry, isStreaming, startMs) {
 
 async function handleRequest(req, res) {
   const provider = detectProvider(req);
+  if (!provider) return rejectUnsupported(req, res);
+
   const bodyBuf = await collectBody(req);
 
   // 1. Record the incoming request

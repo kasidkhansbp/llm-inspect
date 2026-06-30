@@ -1,69 +1,42 @@
-function countTokens(text) {
-  if (!text) return 0;
-  return Math.ceil(text.length / 4);
+const { PROVIDERS } = require('../constants');
+
+// Default for any client not in PROVIDERS. Per the Side-Channel Invariant, an
+// unsupported provider must never throw: we log once and skip metrics so the
+// proxy still relays traffic faithfully. (Routing rejects unknown clients before
+// they reach here — this is the defensive fallback and the worked example.)
+const UNSUPPORTED = {
+  extractMessages: () => [],
+  parseStreamingTokens: () => ({ inputTokens: 0, outputTokens: 0 }),
+  streamDelta: () => null,
+  applyResponse: () => {},
+};
+
+function providerFor(provider) {
+  const handler = PROVIDERS[provider];
+  if (!handler) {
+    console.warn(`[tokens] LLM client "${provider}" is not supported — metrics skipped. Add it to PROVIDERS in constants.js (see the example block).`);
+  }
+  return handler || UNSUPPORTED;
 }
 
 function extractMessages(body, provider) {
-  const messages = [];
-
-  if (provider === 'anthropic') {
-    if (body.system) {
-      const text = typeof body.system === 'string'
-        ? body.system
-        : body.system.map(b => b.text || '').join('');
-      messages.push({ role: 'system', tokens: countTokens(text), preview: text.slice(0, 200) });
-    }
-    for (const msg of (body.messages || [])) {
-      const text = typeof msg.content === 'string'
-        ? msg.content
-        : (msg.content || []).map(b => b.text || '').join('');
-      messages.push({ role: msg.role, tokens: countTokens(text), preview: text.slice(0, 200) });
-    }
-  } else {
-    for (const msg of (body.messages || [])) {
-      const text = typeof msg.content === 'string'
-        ? msg.content
-        : (msg.content || []).map(b => typeof b === 'string' ? b : (b.text || '')).join('');
-      messages.push({ role: msg.role, tokens: countTokens(text), preview: text.slice(0, 200) });
-    }
-  }
-
-  return messages;
+  return providerFor(provider).extractMessages(body);
 }
 
 function parseStreamingTokens(chunks, provider) {
   const text = Buffer.concat(chunks).toString();
-  let inputTokens = 0, outputTokens = 0;
-
-  if (provider === 'anthropic') {
-    const match = text.match(/"usage"\s*:\s*\{[^}]*"input_tokens"\s*:\s*(\d+)[^}]*"output_tokens"\s*:\s*(\d+)/);
-    if (match) { inputTokens = parseInt(match[1]); outputTokens = parseInt(match[2]); }
-    const deltaMatch = text.match(/"usage"\s*:\s*\{[^}]*"output_tokens"\s*:\s*(\d+)/g);
-    if (deltaMatch) {
-      const last = deltaMatch[deltaMatch.length - 1];
-      const m = last.match(/"output_tokens"\s*:\s*(\d+)/);
-      if (m) outputTokens = Math.max(outputTokens, parseInt(m[1]));
-    }
-  } else {
-    const match = text.match(/"usage"\s*:\s*\{[^}]*"prompt_tokens"\s*:\s*(\d+)[^}]*"completion_tokens"\s*:\s*(\d+)/);
-    if (match) { inputTokens = parseInt(match[1]); outputTokens = parseInt(match[2]); }
-  }
-
-  return { inputTokens, outputTokens };
+  return providerFor(provider).parseStreamingTokens(text);
 }
 
 function extractStreamingText(chunks, provider) {
   const text = Buffer.concat(chunks).toString();
+  const handler = providerFor(provider);
   const parts = [];
   for (const line of text.split('\n')) {
     if (!line.startsWith('data: ')) continue;
     try {
-      const data = JSON.parse(line.slice(6));
-      if (provider === 'anthropic' && data.type === 'content_block_delta' && data.delta?.type === 'text_delta') {
-        parts.push(data.delta.text);
-      } else if (provider === 'openai' && data.choices?.[0]?.delta?.content) {
-        parts.push(data.choices[0].delta.content);
-      }
+      const piece = handler.streamDelta(JSON.parse(line.slice(6)));
+      if (piece) parts.push(piece);
     } catch(err) {
       console.error('parse failed for line:', JSON.stringify(line), err.message);
     }
@@ -83,19 +56,16 @@ function applyResponse(entry, chunks, isStreaming) {
   }
 
   let json;
-  try { json = JSON.parse(Buffer.concat(chunks).toString()); } catch { return; }
+  try {
+    json = JSON.parse(Buffer.concat(chunks).toString());
+  } catch (err) {
+    // Malformed/incomplete response body: lose the metrics, not the proxied response.
+    console.warn(`[tokens] could not parse ${provider} response body as JSON: ${err.message}`);
+    return;
+  }
   if (!json.usage) return;
 
-  if (provider === 'anthropic') {
-    entry.inputTokens = json.usage.input_tokens || entry.inputTokens;
-    entry.outputTokens = json.usage.output_tokens || 0;
-    entry.responseText = (json.content || [])
-      .filter(b => b.type === 'text').map(b => b.text).join('\n') || null;
-  } else if (provider === 'openai') {
-    entry.inputTokens = json.usage.prompt_tokens || entry.inputTokens;
-    entry.outputTokens = json.usage.completion_tokens || 0;
-    entry.responseText = json.choices?.[0]?.message?.content || null;
-  }
+  providerFor(provider).applyResponse(entry, json);
   entry.responseRaw = json;
 }
 
