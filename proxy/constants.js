@@ -1,4 +1,5 @@
-// Provider registry — the single place to configure an LLM client.
+// Shared constants: server ports/origins and the provider registry — the
+// single place to configure an LLM client.
 //
 // Each entry fully describes one client. To support a new one (e.g. deepseek),
 // add ONE entry here; no other file needs to change. An entry has two groups:
@@ -13,6 +14,24 @@
 //     parseStreamingTokens(text) -> { inputTokens, outputTokens }
 //     streamDelta(data)          -> text of one SSE event, or null
 //     applyResponse(entry, json) -> mutate entry.inputTokens/outputTokens/responseText
+
+// ── Server constants ────────────────────────────────────────────────────────
+
+const PROXY_PORT = 8787;      // LLM traffic (loopback only)
+const DASHBOARD_PORT = 8788;  // browser UI + SSE (loopback only)
+
+// CSRF guard for state-changing dashboard endpoints: any web page can fire a
+// cross-origin POST at this port (CORS blocks reading the response, not
+// sending the request). Browsers always attach the page's Origin to such a
+// POST, so only our own loopback origin — or a non-browser client, which
+// sends no Origin at all — may pass.
+const ALLOWED_ORIGINS = new Set([
+  `http://127.0.0.1:${DASHBOARD_PORT}`,
+  `http://localhost:${DASHBOARD_PORT}`,
+  `http://[::1]:${DASHBOARD_PORT}`,
+]);
+
+// ── Provider registry ───────────────────────────────────────────────────────
 
 function countTokens(text) {
   if (!text) return 0;
@@ -74,7 +93,10 @@ const PROVIDERS = {
     // route
     match: (url) => url.startsWith('/openai') || url.startsWith('/v1/chat'),
     host: 'api.openai.com',
-    rewritePath: (path) => path.replace(/^\/openai/, '') || '/',
+    // The /openai routing prefix maps to OpenAI's /v1 API. Clients point at
+    // .../openai (SDK sends /openai/chat/completions); rewrite to /v1/chat/...
+    // Direct /v1/chat/... callers have no prefix to strip and pass through.
+    rewritePath: (path) => path.replace(/^\/openai/, '/v1'),
     // parse
     extractMessages(body) {
       const messages = [];
@@ -118,4 +140,4 @@ const PROVIDERS = {
   // },
 };
 
-module.exports = { PROVIDERS };
+module.exports = { PROVIDERS, PROXY_PORT, DASHBOARD_PORT, ALLOWED_ORIGINS };

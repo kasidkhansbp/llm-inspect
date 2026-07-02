@@ -2,9 +2,15 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { requests, sseClients } = require('../lib/store');
+const { DASHBOARD_PORT, ALLOWED_ORIGINS } = require('../constants');
 
-const DASHBOARD_PORT = 8788;
 const DASHBOARD_DIR = path.join(__dirname, '../dashboard');
+
+// CSRF guard — see ALLOWED_ORIGINS in constants.js for the threat model.
+function isSameOrigin(req) {
+  const origin = req.headers.origin;
+  return origin === undefined || ALLOWED_ORIGINS.has(origin);
+}
 
 function serveFile(res, filePath, contentType) {
   try {
@@ -41,8 +47,14 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/shutdown') {
+    if (!isSameOrigin(req)) {
+      res.writeHead(403);
+      res.end('Forbidden');
+      return;
+    }
     res.writeHead(200);
     res.end('', () => process.exit(0));
+    return;
   }
 
   if (req.url === '/app.js') {
