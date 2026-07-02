@@ -12,7 +12,7 @@
     "proxy/"
   ],
   "scripts": {
-    "prepack": "node -e \"const fs=require('fs'); try{fs.rmSync('./proxy',{recursive:true})}catch(e){}; fs.cpSync('../../proxy', './proxy', {recursive:true})\"",
+    "prepack": "node -e \"const fs=require('fs'); try{fs.rmSync('./proxy',{recursive:true})}catch(e){}; fs.cpSync('../../proxy', './proxy', {recursive:true}); fs.copyFileSync('../../LICENSE', './LICENSE')\"",
     "start": "node ../../proxy/main.js"
   },
   "repository": {
