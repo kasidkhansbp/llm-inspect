@@ -36,7 +36,7 @@ function rejectUnsupported(req, res) {
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
     error: 'Unsupported LLM client',
-    detail: `No provider matches "${req.url}". This proxy supports: ${supported}. Add a provider in server/proxy.js and lib/tokens.js to extend it.`,
+    detail: `No provider matches "${req.url}". This proxy supports: ${supported}. Add one PROVIDERS entry in constants.js to extend it (see the deepseek example).`,
   }));
 }
 
