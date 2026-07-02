@@ -20,16 +20,21 @@
 const PROXY_PORT = 8787;      // LLM traffic (loopback only)
 const DASHBOARD_PORT = 8788;  // browser UI + SSE (loopback only)
 
-// CSRF guard for state-changing dashboard endpoints: any web page can fire a
-// cross-origin POST at this port (CORS blocks reading the response, not
-// sending the request). Browsers always attach the page's Origin to such a
-// POST, so only our own loopback origin — or a non-browser client, which
-// sends no Origin at all — may pass.
-const ALLOWED_ORIGINS = new Set([
-  `http://127.0.0.1:${DASHBOARD_PORT}`,
-  `http://localhost:${DASHBOARD_PORT}`,
-  `http://[::1]:${DASHBOARD_PORT}`,
-]);
+// The loopback names these servers answer to, shared by both guards below.
+const LOOPBACK_HOSTNAMES = ['127.0.0.1', 'localhost', '[::1]'];
+
+// CSRF guard: cross-origin POSTs carry the sending page's Origin, so only our
+// own loopback origin (or a non-browser client, which sends none) may hit
+// state-changing dashboard endpoints.
+const ALLOWED_ORIGINS = new Set(
+  LOOPBACK_HOSTNAMES.map(h => `http://${h}:${DASHBOARD_PORT}`)
+);
+
+const loopbackHosts = (port) => new Set(
+  LOOPBACK_HOSTNAMES.map(h => `${h}:${port}`)
+);
+const PROXY_ALLOWED_HOSTS = loopbackHosts(PROXY_PORT);
+const DASHBOARD_ALLOWED_HOSTS = loopbackHosts(DASHBOARD_PORT);
 
 // ── Provider registry ───────────────────────────────────────────────────────
 
@@ -140,4 +145,11 @@ const PROVIDERS = {
   // },
 };
 
-module.exports = { PROVIDERS, PROXY_PORT, DASHBOARD_PORT, ALLOWED_ORIGINS };
+module.exports = {
+  PROVIDERS,
+  PROXY_PORT,
+  DASHBOARD_PORT,
+  ALLOWED_ORIGINS,
+  PROXY_ALLOWED_HOSTS,
+  DASHBOARD_ALLOWED_HOSTS,
+};

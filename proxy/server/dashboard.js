@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { requests, sseClients } = require('../lib/store');
-const { DASHBOARD_PORT, ALLOWED_ORIGINS } = require('../constants');
+const { DASHBOARD_PORT, ALLOWED_ORIGINS, DASHBOARD_ALLOWED_HOSTS } = require('../constants');
 
 const DASHBOARD_DIR = path.join(__dirname, '../dashboard');
 
@@ -10,6 +10,12 @@ const DASHBOARD_DIR = path.join(__dirname, '../dashboard');
 function isSameOrigin(req) {
   const origin = req.headers.origin;
   return origin === undefined || ALLOWED_ORIGINS.has(origin);
+}
+
+// DNS-rebinding guard — see DASHBOARD_ALLOWED_HOSTS in constants.js.
+function isLoopbackHost(req) {
+  const host = (req.headers.host || '').toLowerCase();
+  return DASHBOARD_ALLOWED_HOSTS.has(host);
 }
 
 function serveFile(res, filePath, contentType) {
@@ -31,6 +37,16 @@ function serveFile(res, filePath, contentType) {
 }
 
 const server = http.createServer((req, res) => {
+  // DNS-rebinding guard: a malicious site whose domain re-resolves to
+  // 127.0.0.1 can request this server from the browser (same-origin policy
+  // never applies), but its domain — not a loopback name — shows up in Host.
+  // Checked before all routes as /events alone exposes every prompt/response.
+  if (!isLoopbackHost(req)) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
+
   if (req.url === '/events') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',

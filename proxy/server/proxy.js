@@ -3,10 +3,8 @@ const https = require('https');
 const { estimateCost } = require('../lib/pricing');
 const { extractMessages, applyResponse } = require('../lib/tokens');
 const { broadcast, addRequest, createEntry } = require('../lib/store');
-const { PROVIDERS } = require('../constants');
+const { PROVIDERS, PROXY_PORT, PROXY_ALLOWED_HOSTS } = require('../constants');
 const { version } = require('../package.json');
-
-const PROXY_PORT = 8787;
 
 function collectBody(req) {
   return new Promise((resolve, reject) => {
@@ -122,8 +120,21 @@ async function handleRequest(req, res) {
   upstream.end();
 }
 
+// DNS-rebinding guard — see PROXY_ALLOWED_HOSTS in constants.js.
+function isLoopbackHost(req) {
+  const host = (req.headers.host || '').toLowerCase();
+  return PROXY_ALLOWED_HOSTS.has(host);
+}
+
 const server = http.createServer((req, res) => {
   res.on('error', () => {});
+  // Reject rebound hostnames before routing — a browser reaching this port
+  // through an attacker's domain must not inject or observe LLM traffic.
+  if (!isLoopbackHost(req)) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Forbidden: llm-inspect only serves loopback hosts' }));
+    return;
+  }
   if (req.url === '/health') return handleHealth(res);
   handleRequest(req, res).catch(() => {
     // A client abort mid-body rejects collectBody(); unhandled, that
