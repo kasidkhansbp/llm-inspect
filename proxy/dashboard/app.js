@@ -1,6 +1,13 @@
 // Keep in sync with MAX_REQUESTS in proxy/lib/store.js
 const MAX_REQUESTS = 200;
-const state = { requests: [], selected: null };
+const state = { requests: [], selected: null, filter: 'all' };
+
+// Requests matching the active provider filter ('all' shows everything).
+function filteredRequests() {
+  return state.filter === 'all'
+    ? state.requests
+    : state.requests.filter(r => r.provider === state.filter);
+}
 
 // ── Formatters ──────────────────────────────────────────────────────────────
 
@@ -110,8 +117,9 @@ function upsert(req) {
 // ── Stats ────────────────────────────────────────────────────────────────────
 
 function updateStats() {
-  const done = state.requests.filter(r => r.status !== 'pending');
-  document.getElementById('stat-count').textContent = state.requests.length;
+  const visible = filteredRequests();
+  const done = visible.filter(r => r.status !== 'pending');
+  document.getElementById('stat-count').textContent = visible.length;
   document.getElementById('stat-tokens').textContent = fmt(
     done.reduce((s, r) => s + r.inputTokens + r.outputTokens, 0)
   );
@@ -119,12 +127,43 @@ function updateStats() {
   document.getElementById('stat-cost').textContent = fmtCost(totalCost || null);
 }
 
+// ── Provider filter ──────────────────────────────────────────────────────────
+
+// Build tabs from the providers actually present, so a new provider added in
+// constants.js surfaces here with no dashboard change.
+function renderFilters() {
+  const counts = {};
+  for (const r of state.requests) counts[r.provider] = (counts[r.provider] || 0) + 1;
+  const providers = Object.keys(counts).sort();
+
+  // Selected provider no longer present (e.g. evicted) — fall back to All.
+  if (state.filter !== 'all' && !counts[state.filter]) state.filter = 'all';
+
+  const tabs = [['all', 'All', state.requests.length]];
+  for (const p of providers) tabs.push([p, p, counts[p]]);
+
+  const el = document.getElementById('filters');
+  el.innerHTML = '';
+  for (const [value, label, count] of tabs) {
+    const btn = document.createElement('button');
+    btn.className = 'filter-tab' + (state.filter === value ? ' active' : '');
+    btn.innerHTML = `${escHtml(label)}<span class="filter-count">${count}</span>`;
+    btn.addEventListener('click', () => {
+      state.filter = value;
+      renderFilters();
+      renderList();
+      updateStats();
+    });
+    el.appendChild(btn);
+  }
+}
+
 // ── Request list ─────────────────────────────────────────────────────────────
 
 function renderList() {
   const el = document.getElementById('request-list');
   el.innerHTML = '';
-  for (const r of state.requests) {
+  for (const r of filteredRequests()) {
     const div = document.createElement('div');
     div.className = 'req-item' + (state.selected === r.id ? ' selected' : '');
     div.dataset.id = r.id;
@@ -166,6 +205,7 @@ function renderDetail() {
     <span>${escHtml(r.provider)}</span>
     <span>${fmtTime(r.timestamp)}</span>
     ${r.durationMs != null ? `<span>${fmtDuration(r.durationMs)}</span>` : ''}
+    ${r.statusCode != null ? `<span class="${r.statusCode < 400 ? '' : 'status-code-error'}">HTTP ${escHtml(r.statusCode)}</span>` : ''}
     <span class="req-status status-${cssSafe(r.status)}" style="display:inline-block"></span>
   `;
 
@@ -221,12 +261,14 @@ function connect() {
 
   es.addEventListener('init', e => {
     state.requests = JSON.parse(e.data);
+    renderFilters();
     renderList();
     updateStats();
   });
 
   es.addEventListener('request', e => {
     upsert(JSON.parse(e.data));
+    renderFilters();
     renderList();
     updateStats();
     if (!state.selected) selectRequest(state.requests[0]?.id);
@@ -237,6 +279,7 @@ function connect() {
     // Ignore updates for requests already evicted from the capped list
     if (!state.requests.some(r => r.id === req.id)) return;
     upsert(req);
+    renderFilters();
     renderList();
     updateStats();
     if (state.selected === req.id) renderDetail();

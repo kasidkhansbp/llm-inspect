@@ -36,6 +36,7 @@ function createEntry(provider, parsedBody, messages) {
     provider,
     model: parsedBody.model || 'unknown',
     status: 'pending',
+    statusCode: null,
     inputTokens: messages.reduce((s, m) => s + m.tokens, 0),
     outputTokens: 0,
     cost: null,

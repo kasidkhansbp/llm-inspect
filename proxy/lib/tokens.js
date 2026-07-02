@@ -47,7 +47,9 @@ function extractStreamingText(chunks, provider) {
 // Mutates entry with tokens/text parsed from the upstream response.
 function applyResponse(entry, chunks, isStreaming) {
   const { provider } = entry;
-  if (isStreaming) {
+  // A failed request gets a plain JSON error body even when it asked for a
+  // stream — parse it as JSON below so the error is recorded, not lost.
+  if (isStreaming && entry.statusCode < 400) {
     const { inputTokens, outputTokens } = parseStreamingTokens(chunks, provider);
     if (inputTokens > 0) entry.inputTokens = inputTokens;
     entry.outputTokens = outputTokens;
@@ -59,14 +61,13 @@ function applyResponse(entry, chunks, isStreaming) {
   try {
     json = JSON.parse(Buffer.concat(chunks).toString());
   } catch (err) {
-    // Malformed/incomplete response body: lose the metrics, not the proxied response.
     console.warn(`[tokens] could not parse ${provider} response body as JSON: ${err.message}`);
     return;
   }
+  entry.responseRaw = json;
   if (!json.usage) return;
 
   providerFor(provider).applyResponse(entry, json);
-  entry.responseRaw = json;
 }
 
 module.exports = { extractMessages, parseStreamingTokens, extractStreamingText, applyResponse };

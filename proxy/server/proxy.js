@@ -73,6 +73,7 @@ function recordRequest(provider, bodyBuf) {
 
 // Relay the upstream response to the client while tee-ing a copy for metrics.
 function handleUpstreamResponse(upstreamRes, res, entry, isStreaming, startMs) {
+  entry.statusCode = upstreamRes.statusCode;
   res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
   const chunks = [];
 
@@ -111,8 +112,12 @@ async function handleRequest(req, res) {
 
   // 3. Handle upstream connection failures (couldn't reach the API at all)
   upstream.on('error', (err) => {
+    const body = { error: 'Upstream request failed', detail: err.message };
     res.writeHead(502);
-    res.end(JSON.stringify({ error: 'Upstream request failed', detail: err.message }));
+    res.end(JSON.stringify(body));
+    // Record what the client was told, so the dashboard can show it too.
+    entry.statusCode = 502;
+    entry.responseRaw = body;
     finalize(entry, startMs, 'error');
   });
 
@@ -137,16 +142,12 @@ const server = http.createServer((req, res) => {
   }
   if (req.url === '/health') return handleHealth(res);
   handleRequest(req, res).catch(() => {
-    // A client abort mid-body rejects collectBody(); unhandled, that
-    // rejection would crash the proxy and kill every in-flight call.
     if (!res.headersSent) res.writeHead(500);
     res.end();
   });
 });
 
 function start() {
-  // A bind failure must exit (not linger half-started) so the SDK
-  // wrappers detect the dead proxy and fail open.
   server.on('error', (err) => {
     console.error(`[llm-inspect] failed to bind :${PROXY_PORT}: ${err.message}`);
     process.exit(1);
