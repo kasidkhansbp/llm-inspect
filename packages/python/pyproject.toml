@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/kasidkhan/llm-inspect"
+Homepage = "https://github.com/kasidkhansbp/llm-inspect"
 
 [tool.hatch.build.targets.wheel.force-include]
 "../../proxy" = "llm_inspect/proxy"
