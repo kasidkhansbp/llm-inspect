@@ -41,7 +41,7 @@ or know that HTTP exists.** (This is why `createEntry`/`applyResponse` live in `
 **One deliberate exception — the provider registry (`constants.js`).** Adding a client must
 be a *single* edit, so all per-provider config lives in one `PROVIDERS` map in `constants.js`,
 where each entry carries both its routing (`match`/`host`/`rewritePath`, a Pass concern) and
-its parsing (`extractMessages`/`parseStreamingTokens`/`streamDelta`/`applyResponse`, a Parse
+its parsing (`extractMessages`/`streamDelta`/`streamUsage`/`applyResponse`, a Parse
 concern). `lib/tokens.js` imports this map, so Parse technically *sees* the upstream hostnames.
 This is an accepted trade: single-source extensibility beats strict layering here. The rule is
 still honored in spirit — `lib/` only *reads its parse fields and acts on them*; it never
@@ -96,7 +96,7 @@ Execution rules:
   the entry shape and its id counter; keep the factory next to `addRequest` so the entry
   lifecycle (create → store → cap) stays in one module.
 - Parsing responses / counting tokens (streaming + non-streaming) → `lib/tokens.js`
-  (`extractMessages`, `parseStreamingTokens`, `extractStreamingText`, `applyResponse`). These
+  (`extractMessages`, `parseStream`, `applyResponse`). These
   are thin orchestrators: they dispatch to the per-provider strategy via `providerFor`, falling
   back to a no-op `UNSUPPORTED` handler. The provider-specific logic itself lives in
   `constants.js` (`PROVIDERS`), not here.

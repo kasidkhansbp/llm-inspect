@@ -6,8 +6,8 @@ const { PROVIDERS } = require('../constants');
 // they reach here — this is the defensive fallback and the worked example.)
 const UNSUPPORTED = {
   extractMessages: () => [],
-  parseStreamingTokens: () => ({ inputTokens: 0, outputTokens: 0 }),
   streamDelta: () => null,
+  streamUsage: () => {},
   applyResponse: () => {},
 };
 
@@ -23,25 +23,28 @@ function extractMessages(body, provider) {
   return providerFor(provider).extractMessages(body);
 }
 
-function parseStreamingTokens(chunks, provider) {
-  const text = Buffer.concat(chunks).toString();
-  return providerFor(provider).parseStreamingTokens(text);
-}
-
-function extractStreamingText(chunks, provider) {
-  const text = Buffer.concat(chunks).toString();
+// One pass over the SSE buffer: each `data:` line is JSON-parsed once, and the
+// provider pulls response text (streamDelta) and token usage (streamUsage)
+// from the parsed event — no regexes over raw text, so nested fields in
+// `usage` (e.g. Anthropic's cache_creation) can't break the counts.
+function parseStream(chunks, provider) {
   const handler = providerFor(provider);
+  const usage = { inputTokens: 0, outputTokens: 0 };
   const parts = [];
-  for (const line of text.split('\n')) {
+  for (const line of Buffer.concat(chunks).toString().split('\n')) {
     if (!line.startsWith('data: ')) continue;
+    const payload = line.slice(6).trim();
+    if (payload === '[DONE]') continue; // OpenAI's end-of-stream sentinel, not JSON
     try {
-      const piece = handler.streamDelta(JSON.parse(line.slice(6)));
+      const data = JSON.parse(payload);
+      const piece = handler.streamDelta(data);
       if (piece) parts.push(piece);
-    } catch(err) {
+      handler.streamUsage(data, usage);
+    } catch (err) {
       console.error('parse failed for line:', JSON.stringify(line), err.message);
     }
   }
-  return parts.length ? parts.join('') : null;
+  return { ...usage, responseText: parts.length ? parts.join('') : null };
 }
 
 // Mutates entry with tokens/text parsed from the upstream response.
@@ -50,10 +53,10 @@ function applyResponse(entry, chunks, isStreaming) {
   // A failed request gets a plain JSON error body even when it asked for a
   // stream — parse it as JSON below so the error is recorded, not lost.
   if (isStreaming && entry.statusCode < 400) {
-    const { inputTokens, outputTokens } = parseStreamingTokens(chunks, provider);
+    const { inputTokens, outputTokens, responseText } = parseStream(chunks, provider);
     if (inputTokens > 0) entry.inputTokens = inputTokens;
     entry.outputTokens = outputTokens;
-    entry.responseText = extractStreamingText(chunks, provider);
+    entry.responseText = responseText;
     return;
   }
 
@@ -70,4 +73,4 @@ function applyResponse(entry, chunks, isStreaming) {
   providerFor(provider).applyResponse(entry, json);
 }
 
-module.exports = { extractMessages, parseStreamingTokens, extractStreamingText, applyResponse };
+module.exports = { extractMessages, parseStream, applyResponse };

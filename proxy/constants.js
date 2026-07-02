@@ -11,8 +11,8 @@
 //
 //   parse — used by lib/tokens.js (Parse):
 //     extractMessages(body)      -> [{ role, tokens, preview }]
-//     parseStreamingTokens(text) -> { inputTokens, outputTokens }
 //     streamDelta(data)          -> text of one SSE event, or null
+//     streamUsage(data, usage)   -> mutate usage.inputTokens/outputTokens from one SSE event
 //     applyResponse(entry, json) -> mutate entry.inputTokens/outputTokens/responseText
 
 // ── Server constants ────────────────────────────────────────────────────────
@@ -70,21 +70,17 @@ const PROVIDERS = {
       }
       return messages;
     },
-    parseStreamingTokens(text) {
-      let inputTokens = 0, outputTokens = 0;
-      const match = text.match(/"usage"\s*:\s*\{[^}]*"input_tokens"\s*:\s*(\d+)[^}]*"output_tokens"\s*:\s*(\d+)/);
-      if (match) { inputTokens = parseInt(match[1]); outputTokens = parseInt(match[2]); }
-      const deltaMatch = text.match(/"usage"\s*:\s*\{[^}]*"output_tokens"\s*:\s*(\d+)/g);
-      if (deltaMatch) {
-        const last = deltaMatch[deltaMatch.length - 1];
-        const m = last.match(/"output_tokens"\s*:\s*(\d+)/);
-        if (m) outputTokens = Math.max(outputTokens, parseInt(m[1]));
-      }
-      return { inputTokens, outputTokens };
-    },
     streamDelta(data) {
       if (data.type === 'content_block_delta' && data.delta?.type === 'text_delta') return data.delta.text;
       return null;
+    },
+    streamUsage(data, usage) {
+      // message_start nests usage under message; message_delta events carry it
+      // at the top level with a cumulative output_tokens (the last one wins).
+      const u = data.type === 'message_start' ? data.message?.usage : data.usage;
+      if (!u) return;
+      if (u.input_tokens) usage.inputTokens = u.input_tokens;
+      if (u.output_tokens != null) usage.outputTokens = u.output_tokens;
     },
     applyResponse(entry, json) {
       entry.inputTokens = json.usage.input_tokens || entry.inputTokens;
@@ -113,14 +109,15 @@ const PROVIDERS = {
       }
       return messages;
     },
-    parseStreamingTokens(text) {
-      let inputTokens = 0, outputTokens = 0;
-      const match = text.match(/"usage"\s*:\s*\{[^}]*"prompt_tokens"\s*:\s*(\d+)[^}]*"completion_tokens"\s*:\s*(\d+)/);
-      if (match) { inputTokens = parseInt(match[1]); outputTokens = parseInt(match[2]); }
-      return { inputTokens, outputTokens };
-    },
     streamDelta(data) {
       return data.choices?.[0]?.delta?.content || null;
+    },
+    streamUsage(data, usage) {
+      // Only the final chunk carries usage, and only when the client sent
+      // stream_options: { include_usage: true }; otherwise counts stay 0.
+      if (!data.usage) return;
+      usage.inputTokens = data.usage.prompt_tokens || 0;
+      usage.outputTokens = data.usage.completion_tokens || 0;
     },
     applyResponse(entry, json) {
       entry.inputTokens = json.usage.prompt_tokens || entry.inputTokens;
@@ -139,8 +136,8 @@ const PROVIDERS = {
   //   rewritePath: (path) => path.replace(/^\/deepseek/, '') || '/',
   //   // parse
   //   extractMessages(body)      { /* return [{ role, tokens, preview }] */ },
-  //   parseStreamingTokens(text) { /* return { inputTokens, outputTokens } */ },
   //   streamDelta(data)          { /* return text of one SSE event, or null */ },
+  //   streamUsage(data, usage)   { /* mutate usage.inputTokens/outputTokens from one SSE event */ },
   //   applyResponse(entry, json) { /* mutate entry.inputTokens/outputTokens/responseText */ },
   // },
 };
