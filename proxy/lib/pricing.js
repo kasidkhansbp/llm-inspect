@@ -21,8 +21,13 @@ const MODEL_PRICING = {
 
 function pricingForModel(model) {
   if (!model) return null;
-  const key = Object.keys(MODEL_PRICING).find(k => model.startsWith(k));
-  return key ? MODEL_PRICING[key] : null;
+  // Longest matching prefix wins: gpt-4o-mini must hit its own entry, not
+  // gpt-4o's — first-match would price it 17x too high.
+  let best = null;
+  for (const key of Object.keys(MODEL_PRICING)) {
+    if (model.startsWith(key) && (best === null || key.length > best.length)) best = key;
+  }
+  return best ? MODEL_PRICING[best] : null;
 }
 
 function estimateCost(model, inputTokens, outputTokens) {
