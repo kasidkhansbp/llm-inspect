@@ -2,7 +2,11 @@
   "name": "llm-inspect-test",
   "version": "1.0.0",
   "private": true,
+  "scripts": {
+    "test": "node unit.js && node test.js"
+  },
   "dependencies": {
-    "@anthropic-ai/sdk": "latest"
+    "@anthropic-ai/sdk": "0.100.1",
+    "openai": "6.45.0"
   }
 }
