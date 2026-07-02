@@ -1,4 +1,4 @@
-const { PROVIDERS } = require('../constants');
+const { PROVIDERS, applyUsageToEntry } = require('../constants');
 
 // Default for any client not in PROVIDERS. Per the Side-Channel Invariant, an
 // unsupported provider must never throw: we log once and skip metrics so the
@@ -29,7 +29,7 @@ function extractMessages(body, provider) {
 // `usage` (e.g. Anthropic's cache_creation) can't break the counts.
 function parseStream(chunks, provider) {
   const handler = providerFor(provider);
-  const usage = { inputTokens: 0, outputTokens: 0 };
+  const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
   const parts = [];
   for (const line of Buffer.concat(chunks).toString().split('\n')) {
     if (!line.startsWith('data: ')) continue;
@@ -53,9 +53,8 @@ function applyResponse(entry, chunks, isStreaming) {
   // A failed request gets a plain JSON error body even when it asked for a
   // stream — parse it as JSON below so the error is recorded, not lost.
   if (isStreaming && entry.statusCode < 400) {
-    const { inputTokens, outputTokens, responseText } = parseStream(chunks, provider);
-    if (inputTokens > 0) entry.inputTokens = inputTokens;
-    entry.outputTokens = outputTokens;
+    const { responseText, ...usage } = parseStream(chunks, provider);
+    applyUsageToEntry(entry, usage);
     entry.responseText = responseText;
     return;
   }

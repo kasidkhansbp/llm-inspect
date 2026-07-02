@@ -39,6 +39,8 @@ function createEntry(provider, parsedBody, messages) {
     statusCode: null,
     inputTokens: messages.reduce((s, m) => s + m.tokens, 0),
     outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
     cost: null,
     messages,
     requestBody: parsedBody,

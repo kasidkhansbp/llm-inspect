@@ -1,6 +1,6 @@
 const http = require('http');
 const https = require('https');
-const { estimateCost } = require('../lib/pricing');
+const { costBreakdown } = require('../lib/pricing');
 const { extractMessages, applyResponse } = require('../lib/tokens');
 const { broadcast, addRequest, createEntry } = require('../lib/store');
 const { PROVIDERS, PROXY_PORT, PROXY_ALLOWED_HOSTS } = require('../constants');
@@ -66,6 +66,7 @@ function recordRequest(provider, bodyBuf) {
   }
 
   const entry = createEntry(provider, parsedBody, extractMessages(parsedBody, provider));
+  entry.pricingUrl = PROVIDERS[provider].pricingUrl || null;
   addRequest(entry);
   broadcast('request', entry);
   return { entry, isStreaming: parsedBody.stream === true };
@@ -85,7 +86,8 @@ function handleUpstreamResponse(upstreamRes, res, entry, isStreaming, startMs) {
   upstreamRes.on('end', () => {
     res.end();
     applyResponse(entry, chunks, isStreaming);
-    entry.cost = estimateCost(entry.model, entry.inputTokens, entry.outputTokens);
+    entry.costBreakdown = costBreakdown(entry.model, entry);
+    entry.cost = entry.costBreakdown ? entry.costBreakdown.total : null;
     finalize(entry, startMs, upstreamRes.statusCode < 400 ? 'success' : 'error');
   });
 

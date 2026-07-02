@@ -89,7 +89,8 @@ Open **http://localhost:8788** in your browser. The dashboard shows live request
 
 - Provider and model name
 - Input / output token counts (actual usage fields from the API response; falls back to ~4 chars/token estimate before the response arrives)
-- Estimated cost in USD
+- Prompt-cache usage (cache reads and writes, shown only when a call used caching — marked ⚡ in the request list). Counts are normalized across providers: **Input always means uncached tokens only**, so for OpenAI the reported `prompt_tokens` is split into its cached and uncached parts
+- Estimated cost in USD, including discounted cache-read/write rates
 - Message structure (role, token count, content preview)
 - Response text and raw JSON
 - Request duration
@@ -158,4 +159,4 @@ To publish a new release, push a `v*` tag — the GitHub Actions workflow publis
 
 - **In-memory only** — the request log resets when the proxy stops. There is no persistence.
 - **Local dev only** — designed for development machines, not production deployments.
-- **Pricing table is static** — cost estimates are based on hardcoded rates in `proxy/lib/pricing.js` and may drift from actual billing.
+- **Pricing table is static** — cost estimates are based on hardcoded rates in `proxy/lib/pricing.js` (including cache read/write rates) and may drift from actual billing. Anthropic cache writes are priced at the default 5-minute-TTL rate (1.25× input); 1-hour-TTL writes bill at 2× and are not modeled, so those calls are underestimated.

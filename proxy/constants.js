@@ -8,12 +8,18 @@
 //     match(url)        claim a request by its path
 //     host              upstream hostname to relay to
 //     rewritePath(path) the path to send upstream
+//     pricingUrl        provider's pricing page, linked from the dashboard's
+//                       cost card so the rates in lib/pricing.js can be audited
 //
 //   parse — used by lib/tokens.js (Parse):
 //     extractMessages(body)      -> [{ role, tokens, preview }]
 //     streamDelta(data)          -> text of one SSE event, or null
-//     streamUsage(data, usage)   -> mutate usage.inputTokens/outputTokens from one SSE event
-//     applyResponse(entry, json) -> mutate entry.inputTokens/outputTokens/responseText
+//     normalizeUsage(rawUsage)   -> { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens }
+//                                   translating the provider's wire format into the
+//                                   shared meaning: inputTokens = UNCACHED input only
+//     streamUsage(data, usage)   -> locate raw usage in one SSE event and merge its
+//                                   normalized fields into the usage accumulator
+//     applyResponse(entry, json) -> mutate entry usage fields/responseText
 
 // ── Server constants ────────────────────────────────────────────────────────
 
@@ -47,12 +53,46 @@ function toMessage(role, text) {
   return { role, tokens: countTokens(text), preview: text.slice(0, 200) };
 }
 
+// Copy normalized usage onto an entry. inputTokens keeps the pre-computed
+// estimate when the response reported none (e.g. a stream with no usage events).
+function applyUsageToEntry(entry, usage) {
+  entry.inputTokens = usage.inputTokens || entry.inputTokens;
+  entry.outputTokens = usage.outputTokens;
+  entry.cacheReadTokens = usage.cacheReadTokens;
+  entry.cacheCreationTokens = usage.cacheCreationTokens;
+}
+
+// Anthropic's input_tokens already excludes cached tokens; cache reads and
+// writes arrive in their own fields, so this is a straight field mapping.
+function normalizeAnthropicUsage(u) {
+  return {
+    inputTokens: u.input_tokens || 0,
+    outputTokens: u.output_tokens || 0,
+    cacheReadTokens: u.cache_read_input_tokens || 0,
+    cacheCreationTokens: u.cache_creation_input_tokens || 0,
+  };
+}
+
+// OpenAI's prompt_tokens INCLUDES cached tokens, so the uncached remainder is
+// prompt − cached (clamped: a malformed payload must not go negative). OpenAI
+// caching is automatic and free to write, so cacheCreationTokens is always 0.
+function normalizeOpenAIUsage(u) {
+  const cached = u.prompt_tokens_details?.cached_tokens || 0;
+  return {
+    inputTokens: Math.max((u.prompt_tokens || 0) - cached, 0),
+    outputTokens: u.completion_tokens || 0,
+    cacheReadTokens: cached,
+    cacheCreationTokens: 0,
+  };
+}
+
 const PROVIDERS = {
   anthropic: {
     // route
     match: (url) => url.startsWith('/v1/messages') || url.startsWith('/v1/complete'),
     host: 'api.anthropic.com',
     rewritePath: (path) => path,
+    pricingUrl: 'https://docs.claude.com/en/docs/about-claude/pricing',
     // parse
     extractMessages(body) {
       const messages = [];
@@ -74,17 +114,22 @@ const PROVIDERS = {
       if (data.type === 'content_block_delta' && data.delta?.type === 'text_delta') return data.delta.text;
       return null;
     },
+    normalizeUsage: normalizeAnthropicUsage,
     streamUsage(data, usage) {
       // message_start nests usage under message; message_delta events carry it
       // at the top level with a cumulative output_tokens (the last one wins).
       const u = data.type === 'message_start' ? data.message?.usage : data.usage;
       if (!u) return;
-      if (u.input_tokens) usage.inputTokens = u.input_tokens;
-      if (u.output_tokens != null) usage.outputTokens = u.output_tokens;
+      // Merge, don't overwrite: message_delta events omit input/cache fields,
+      // and zeroing them would discard what message_start reported.
+      const n = normalizeAnthropicUsage(u);
+      if (n.inputTokens) usage.inputTokens = n.inputTokens;
+      if (n.cacheReadTokens) usage.cacheReadTokens = n.cacheReadTokens;
+      if (n.cacheCreationTokens) usage.cacheCreationTokens = n.cacheCreationTokens;
+      if (u.output_tokens != null) usage.outputTokens = n.outputTokens;
     },
     applyResponse(entry, json) {
-      entry.inputTokens = json.usage.input_tokens || entry.inputTokens;
-      entry.outputTokens = json.usage.output_tokens || 0;
+      applyUsageToEntry(entry, normalizeAnthropicUsage(json.usage));
       entry.responseText = (json.content || [])
         .filter(b => b.type === 'text').map(b => b.text).join('\n') || null;
     },
@@ -98,6 +143,7 @@ const PROVIDERS = {
     // .../openai (SDK sends /openai/chat/completions); rewrite to /v1/chat/...
     // Direct /v1/chat/... callers have no prefix to strip and pass through.
     rewritePath: (path) => path.replace(/^\/openai/, '/v1'),
+    pricingUrl: 'https://platform.openai.com/docs/pricing',
     // parse
     extractMessages(body) {
       const messages = [];
@@ -112,16 +158,15 @@ const PROVIDERS = {
     streamDelta(data) {
       return data.choices?.[0]?.delta?.content || null;
     },
+    normalizeUsage: normalizeOpenAIUsage,
     streamUsage(data, usage) {
       // Only the final chunk carries usage, and only when the client sent
       // stream_options: { include_usage: true }; otherwise counts stay 0.
       if (!data.usage) return;
-      usage.inputTokens = data.usage.prompt_tokens || 0;
-      usage.outputTokens = data.usage.completion_tokens || 0;
+      Object.assign(usage, normalizeOpenAIUsage(data.usage));
     },
     applyResponse(entry, json) {
-      entry.inputTokens = json.usage.prompt_tokens || entry.inputTokens;
-      entry.outputTokens = json.usage.completion_tokens || 0;
+      applyUsageToEntry(entry, normalizeOpenAIUsage(json.usage));
       entry.responseText = json.choices?.[0]?.message?.content || null;
     },
   },
@@ -134,16 +179,22 @@ const PROVIDERS = {
   //   match: (url) => url.startsWith('/deepseek'),
   //   host: 'api.deepseek.com',
   //   rewritePath: (path) => path.replace(/^\/deepseek/, '') || '/',
+  //   pricingUrl: 'https://api-docs.deepseek.com/quick_start/pricing',
   //   // parse
   //   extractMessages(body)      { /* return [{ role, tokens, preview }] */ },
   //   streamDelta(data)          { /* return text of one SSE event, or null */ },
-  //   streamUsage(data, usage)   { /* mutate usage.inputTokens/outputTokens from one SSE event */ },
-  //   applyResponse(entry, json) { /* mutate entry.inputTokens/outputTokens/responseText */ },
+  //   normalizeUsage(rawUsage)   { /* return { inputTokens (uncached only), outputTokens,
+  //                                   cacheReadTokens, cacheCreationTokens } */ },
+  //   streamUsage(data, usage)   { /* locate raw usage in one SSE event, merge its
+  //                                   normalized fields into the accumulator */ },
+  //   applyResponse(entry, json) { /* applyUsageToEntry(entry, this.normalizeUsage(json.usage));
+  //                                   set entry.responseText */ },
   // },
 };
 
 module.exports = {
   PROVIDERS,
+  applyUsageToEntry,
   PROXY_PORT,
   DASHBOARD_PORT,
   ALLOWED_ORIGINS,

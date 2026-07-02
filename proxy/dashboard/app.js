@@ -15,8 +15,15 @@ function fmt(n) {
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
 }
 
+// Entries recorded by an older proxy predate the cache fields — treat missing
+// as 0 rather than propagating NaN into sums and labels.
+function cacheTokens(r) {
+  return (r.cacheReadTokens || 0) + (r.cacheCreationTokens || 0);
+}
+
+// 6 decimals to match the Cost Calculation card's line items exactly.
 function fmtCost(c) {
-  return c == null ? '—' : '$' + c.toFixed(4);
+  return c == null ? '—' : '$' + c.toFixed(6);
 }
 
 function fmtTime(iso) {
@@ -121,7 +128,7 @@ function updateStats() {
   const done = visible.filter(r => r.status !== 'pending');
   document.getElementById('stat-count').textContent = visible.length;
   document.getElementById('stat-tokens').textContent = fmt(
-    done.reduce((s, r) => s + r.inputTokens + r.outputTokens, 0)
+    done.reduce((s, r) => s + r.inputTokens + r.outputTokens + cacheTokens(r), 0)
   );
   const totalCost = done.reduce((s, r) => s + (r.cost || 0), 0);
   document.getElementById('stat-cost').textContent = fmtCost(totalCost || null);
@@ -175,7 +182,7 @@ function renderList() {
       </div>
       <div class="req-bottom">
         <span class="req-time">${fmtTime(r.timestamp)}</span>
-        <span class="req-tokens">${fmt(r.inputTokens)}↑ ${fmt(r.outputTokens)}↓ tok</span>
+        <span class="req-tokens">${fmt(r.inputTokens)}↑ ${fmt(r.outputTokens)}↓${cacheTokens(r) ? ` ${fmt(cacheTokens(r))}⚡` : ''} tok</span>
         <span class="req-cost">${fmtCost(r.cost)}</span>
         ${r.durationMs != null ? `<span>${fmtDuration(r.durationMs)}</span>` : ''}
       </div>
@@ -214,22 +221,74 @@ function renderDetail() {
   body.innerHTML = '';
 
   body.appendChild(renderSummaryCard(r));
-  for (const msg of r.messages) {
+  // Cost isn't computed until the response lands, so no card while pending.
+  if (r.status !== 'pending') body.appendChild(renderCostCard(r));
+  // System/user rows are visible in Raw Request already; only the response
+  // breakdown earns a card. Percentages stay relative to the whole call.
+  for (const msg of r.messages.filter(m => m.role !== 'system' && m.role !== 'user')) {
     body.appendChild(renderMessageCard(msg, totalTok));
   }
   if (r.requestBody) body.appendChild(renderRawCard(r.requestBody));
   if (r.responseRaw) body.appendChild(renderResponseCard(r.responseRaw));
 }
 
+function summaryStat(label, value, style) {
+  return `<div class="summary-stat"><span class="summary-label">${label}</span><span class="summary-value"${style ? ` style="${style}"` : ''}>${value}</span></div>`;
+}
+
 function renderSummaryCard(r) {
+  const cacheRead = r.cacheReadTokens || 0;
+  const cacheWrite = r.cacheCreationTokens || 0;
   const el = document.createElement('div');
   el.className = 'summary-card';
+  el.innerHTML = [
+    summaryStat('Input', fmt(r.inputTokens)),
+    summaryStat('Output', fmt(r.outputTokens)),
+    summaryStat('Cache Read', fmt(cacheRead)),
+    summaryStat('Cache Write', fmt(cacheWrite)),
+    summaryStat('Total', fmt(r.inputTokens + r.outputTokens + cacheRead + cacheWrite)),
+    // The * matches the cost card's footnote: estimate based on dated pricing.
+    summaryStat(r.cost != null ? 'Cost*' : 'Cost', fmtCost(r.cost), 'color:var(--green)'),
+  ].join('');
+  return el;
+}
+
+// Shows the arithmetic behind the entry's cost so the total can be audited
+// against the provider's pricing page. Cache lines appear only when tokens
+// were actually cached; unknown models get an explanatory note instead.
+function renderCostCard(r) {
+  const el = document.createElement('div');
+  el.className = 'section-card';
+
+  let rows;
+  const bd = r.costBreakdown;
+  if (!bd) {
+    rows = `<div class="cost-row cost-row--muted">No pricing data for "${escHtml(r.model)}" — cost not estimated</div>`;
+  } else {
+    const lines = bd.lines.filter(l => l.tokens > 0 || l.label === 'Input' || l.label === 'Output');
+    rows = lines.map(l => `
+      <div class="cost-row">
+        <span class="cost-label">${escHtml(l.label)}</span>
+        <span class="cost-math">${l.tokens.toLocaleString()} tok × $${l.rate}/M</span>
+        <span class="cost-value">$${l.cost.toFixed(6)}</span>
+      </div>`).join('') + `
+      <div class="cost-row cost-row--total">
+        <span class="cost-label">Total*</span>
+        <span class="cost-math"></span>
+        <span class="cost-value">$${bd.total.toFixed(6)}</span>
+      </div>
+      <div class="cost-note">* Estimated — assumes published API prices as of ${escHtml(bd.asOf || 'the last table update')}; actual billing may differ.</div>`;
+  }
+
+  const pricingLink = r.pricingUrl
+    ? `<a class="cost-link" href="${escHtml(r.pricingUrl)}" target="_blank" rel="noopener noreferrer">pricing page ↗</a>`
+    : '';
   el.innerHTML = `
-    <div class="summary-stat"><span class="summary-label">Input</span><span class="summary-value">${fmt(r.inputTokens)}</span></div>
-    <div class="summary-stat"><span class="summary-label">Output</span><span class="summary-value">${fmt(r.outputTokens)}</span></div>
-    <div class="summary-stat"><span class="summary-label">Total</span><span class="summary-value">${fmt(r.inputTokens + r.outputTokens)}</span></div>
-    <div class="summary-stat"><span class="summary-label">Cost</span><span class="summary-value" style="color:var(--green)">${fmtCost(r.cost)}</span></div>
-  `;
+    <div class="section-header" style="cursor:default">
+      <span class="section-label label-cost">Cost Calculation</span>
+      ${pricingLink}
+    </div>
+    <div class="cost-body">${rows}</div>`;
   return el;
 }
 
